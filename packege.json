@@ -1,0 +1,13 @@
+{
+  "name": "currency-exchanger",
+  "version": "1.0.0",
+  "description": "A beautiful currency converter with real-time exchange rates",
+  "homepage": "https://your-currency-exchanger.vercel.app",
+  "scripts": {
+    "dev": "python -m http.server 3000",
+    "build": "echo 'No build process needed for static site'"
+  },
+  "keywords": ["currency", "converter", "exchange", "rates"],
+  "author": "Danish Umer",
+  "license": "MIT"
+}
