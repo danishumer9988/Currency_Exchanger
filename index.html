@@ -508,7 +508,9 @@
             this.filteredFromCurrencies = [];
             this.filteredToCurrencies = [];
             this.currentTheme = localStorage.getItem('theme') || 'light';
-            this.apiKey = 'fbe7af2aecd184a99cae235d'; // Your API key
+            this.exchangeRates = {};
+            this.lastFetchTime = 0;
+            this.cacheDuration = 5 * 60 * 1000; // 5 minutes cache
             this.init();
         }
 
@@ -519,6 +521,9 @@
             this.setupEventListeners();
             this.setDefaultCurrencies();
             this.updateCurrencyCount();
+
+            // Pre-fetch popular currencies
+            this.prefetchRates();
         }
 
         setupThemeToggle() {
@@ -724,6 +729,66 @@
             this.populateCurrencySelects();
         }
 
+        async prefetchRates() {
+            // Pre-fetch rates for popular currencies
+            const popularCurrencies = ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD'];
+            for (const baseCurrency of popularCurrencies) {
+                try {
+                    await this.fetchExchangeRates(baseCurrency);
+                } catch (error) {
+                    console.log(`Failed to prefetch ${baseCurrency} rates`);
+                }
+            }
+        }
+
+        async fetchExchangeRates(baseCurrency) {
+            const now = Date.now();
+
+            // Return cached data if it's still valid
+            if (this.exchangeRates[baseCurrency] &&
+                (now - this.lastFetchTime) < this.cacheDuration) {
+                return this.exchangeRates[baseCurrency];
+            }
+
+            try {
+                // Using a faster and more reliable API
+                const response = await fetch(`https://api.frankfurter.app/latest?from=${baseCurrency}`);
+
+                if (!response.ok) {
+                    throw new Error('API request failed');
+                }
+
+                const data = await response.json();
+
+                if (data.rates) {
+                    this.exchangeRates[baseCurrency] = data.rates;
+                    this.lastFetchTime = now;
+                    return data.rates;
+                } else {
+                    throw new Error('Invalid API response');
+                }
+            } catch (error) {
+                console.error('API Error:', error);
+
+                // Fallback to ExchangeRate-API if Frankfurter fails
+                try {
+                    const fallbackResponse = await fetch(`https://api.exchangerate-api.com/v4/latest/${baseCurrency}`);
+                    const fallbackData = await fallbackResponse.json();
+
+                    if (fallbackData.rates) {
+                        this.exchangeRates[baseCurrency] = fallbackData.rates;
+                        this.lastFetchTime = now;
+                        return fallbackData.rates;
+                    }
+                } catch (fallbackError) {
+                    console.error('Fallback API also failed:', fallbackError);
+                    throw new Error('All APIs failed');
+                }
+
+                throw error;
+            }
+        }
+
         populateCurrencySelects() {
             const fromSelect = document.getElementById('fromCurrency');
             const toSelect = document.getElementById('toCurrency');
@@ -778,13 +843,17 @@
                 }
             });
 
-            // Currency select changes
+            // Real-time conversion on input change
+            document.getElementById('amount').addEventListener('input', () => {
+                this.debouncedConvert();
+            });
+
             document.getElementById('fromCurrency').addEventListener('change', () => {
-                this.clearResults();
+                this.debouncedConvert();
             });
 
             document.getElementById('toCurrency').addEventListener('change', () => {
-                this.clearResults();
+                this.debouncedConvert();
             });
 
             // Clear search on escape key
@@ -802,6 +871,29 @@
                 }
             });
         }
+
+        // Debounce function to prevent too many API calls
+        debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        debouncedConvert = this.debounce(() => {
+            const amount = document.getElementById('amount').value;
+            const fromCurrency = document.getElementById('fromCurrency').value;
+            const toCurrency = document.getElementById('toCurrency').value;
+
+            if (amount && amount > 0 && fromCurrency && toCurrency && fromCurrency !== toCurrency) {
+                this.convertCurrency();
+            }
+        }, 500);
 
         filterCurrencies(type, searchTerm) {
             const search = searchTerm.toLowerCase().trim();
@@ -870,6 +962,7 @@
             this.filterCurrencies('to', toSearch.value);
 
             this.clearResults();
+            this.convertCurrency(); // Auto-convert after swap
         }
 
         async convertCurrency() {
@@ -896,21 +989,19 @@
             this.showLoading();
 
             try {
-                // Using ExchangeRate-API directly
-                const response = await fetch(`https://api.exchangerate-api.com/v4/latest/${fromCurrency}`);
-                const data = await response.json();
+                const rates = await this.fetchExchangeRates(fromCurrency);
 
-                if (data.rates && data.rates[toCurrency]) {
-                    const rate = data.rates[toCurrency];
+                if (rates && rates[toCurrency]) {
+                    const rate = rates[toCurrency];
                     const convertedAmount = amount * rate;
 
                     this.displayResult(amount, fromCurrency, toCurrency, convertedAmount, rate);
                 } else {
-                    this.showError('Conversion failed. Currency not supported.');
+                    this.showError('Conversion failed. Currency pair not supported.');
                 }
             } catch (error) {
-                console.error('API Error:', error);
-                this.showError('Network error: Please check your internet connection');
+                console.error('Conversion Error:', error);
+                this.showError('Conversion failed. Please try again.');
             }
         }
 
